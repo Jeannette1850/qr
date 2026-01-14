@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scan produit</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 20px; }
+    .box { max-width: 560px; margin: 0 auto; padding: 16px; border: 1px solid #ddd; border-radius: 12px; }
+    .muted { color:#666; }
+    .err { color:#b00020; }
+    code { background:#f6f6f6; padding:2px 6px; border-radius: 6px; }
+    button { padding:10px 14px; border:0; border-radius:10px; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>📦 Recherche du produit…</h2>
+    <p class="muted" id="status">Initialisation</p>
+    <p class="err" id="error" style="display:none;"></p>
+    <p id="fallback" style="display:none;">
+      <button id="openBtn">Ouvrir</button>
+    </p>
+  </div>
+
+<script>
+  const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTIpGH8cnQxMXhigUsMuF5McklcRDxJIq_YiZNYsis3hVXK_evudgNEF_Y8ZGtlHu4TgIqhrXl5TSTV/pub?gid=0&single=true&output=csv"; // <-- Remplace par ton URL "pub?output=csv"
+
+  function getParam(name) {
+    const u = new URL(window.location.href);
+    return u.searchParams.get(name);
+  }
+
+  function cleanGtin(x) {
+    return (x || "").toString().trim().replace(/[^0-9]/g, "");
+  }
+
+  // Parse CSV (gère guillemets + virgules)
+  function parseCSV(text) {
+    const lines = text.split(/\r?\n/).filter(l => l.trim() !== "");
+    return lines.map(line => {
+      const out = [];
+      let cur = "", inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+          else inQ = !inQ;
+        } else if (ch === ',' && !inQ) {
+          out.push(cur); cur = "";
+        } else cur += ch;
+      }
+      out.push(cur);
+      return out.map(s => s.trim());
+    });
+  }
+
+  async function run() {
+    const status = document.getElementById("status");
+    const error = document.getElementById("error");
+    const fallback = document.getElementById("fallback");
+    const openBtn = document.getElementById("openBtn");
+
+    const gtin = cleanGtin(getParam("gtin") || getParam("GTIN"));
+    if (!gtin) {
+      error.style.display = "block";
+      error.textContent = "Aucun GTIN fourni. Exemple : ?gtin=1234567890123";
+      status.textContent = "Erreur";
+      return;
+    }
+
+    status.innerHTML = `GTIN détecté : <code>${gtin}</code> — lecture de la base…`;
+
+    let csv = "";
+    try {
+      const resp = await fetch(CSV_URL + (CSV_URL.includes("?") ? "&" : "?") + "_=" + Date.now(), { cache: "no-store" });
+      csv = await resp.text();
+    } catch (e) {
+      error.style.display = "block";
+      error.textContent = "Impossible de charger la base (CSV). Vérifie la publication du sheet.";
+      status.textContent = "Erreur";
+      return;
+    }
+
+    const rows = parseCSV(csv);
+
+    // Col A=GTIN, Col B=Nom, Col C=URL, Col H=Actif
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const gtinSheet = cleanGtin(r[0] || "");
+      const nom = r[1] || "";
+      const url = (r[2] || "").trim();
+      const actif = (r[7] || "").toString().trim().toLowerCase();
+
+      if (gtinSheet === gtin) {
+        if (actif === "non") {
+          status.textContent = `Produit désactivé : ${nom || "(sans nom)"}`;
+          return;
+        }
+        if (!url) {
+          status.textContent = "Produit trouvé, mais URL manquante.";
+          return;
+        }
+
+        const finalUrl = (url.startsWith("http://") || url.startsWith("https://")) ? url : ("https://" + url);
+
+        status.textContent = "Produit trouvé — redirection…";
+        openBtn.onclick = () => window.location.href = finalUrl;
+        fallback.style.display = "block";
+        window.location.href = finalUrl;
+        return;
+      }
+    }
+
+    status.textContent = "Produit introuvable.";
+  }
+
+  run();
+</script>
+</body>
+</html>
+
